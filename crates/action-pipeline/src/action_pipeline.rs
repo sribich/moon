@@ -7,7 +7,7 @@ use crate::subscribers::console_subscriber::ConsoleSubscriber;
 use crate::subscribers::reports_subscriber::ReportsSubscriber;
 use crate::subscribers::webhooks_subscriber::WebhooksSubscriber;
 use moon_action::{Action, ActionNode};
-use moon_action_context::ActionContext;
+use moon_action_context::{ActionContext, TargetState};
 use moon_action_graph::ActionGraph;
 use moon_app_context::AppContext;
 use moon_common::{color, is_ci, is_test_env};
@@ -209,6 +209,25 @@ impl ActionPipeline {
             "Dispatching jobs in the pipeline"
         );
 
+        for node_index in &node_indices {
+            let Some(node) = action_graph.get_node_from_index(node_index) else {
+                continue
+            };
+
+            let ActionNode::RunTask(inner) = node else {
+                continue
+            };
+
+            let project_id = inner.target.get_project_id().expect("Project required for running tasks");
+            let project_graph = job_context.project_graph.clone();
+            let project = project_graph.get(project_id).unwrap();
+            let task = project.get_task(&inner.target.task_id).unwrap();
+
+            if task.is_persistent() {
+                action_context.set_target_state(&task.target, TargetState::Passthrough);
+            }
+        }
+        
         Ok(tokio::spawn(async move {
             let mut dispatcher =
                 JobDispatcher::new(&action_graph, job_context.clone(), node_indices);
